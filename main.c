@@ -11,24 +11,23 @@
 #include "hash_table.h"
 #include "stream.h"
 #include "stream_file.h"
+#include "stream_buffer.h"
 
 int argc;
 char **argv;
 size_t argi;
-#define MAX_SEARCH_PATHS (16)
+
 #define MAX_FUNCTION_COUNT (16)
 typedef struct
 {
-	size_t searchpath_count;
-	const char *search_paths[MAX_SEARCH_PATHS];
+	int input_index;
 	const char *functions[MAX_FUNCTION_COUNT];
 	u64 function_hashes[MAX_FUNCTION_COUNT];
 	size_t function_count;
-	const char *macro_function_name;
 	int bits;
 } Options;
 
-static Options opts = { .macro_function_name = "CT_HASH", .bits = 32 };
+static Options opts = { .bits = 32, .input_index = -1 };
 
 static const char *nextarg()
 {
@@ -46,15 +45,7 @@ static void parse_opts(Options *opts)
 	{
 		const char *opt = argv[argi];
 
-		if(!strcmp(opt, "-d"))
-		{
-			if(opts->searchpath_count >= MAX_SEARCH_PATHS)
-			{
-				fprintf(stderr, "Max search path count reached\n");
-				exit(-1);
-			}
-			opts->search_paths[opts->searchpath_count++] = nextarg();
-		} else if(!strcmp(opt, "-f"))
+		if(!strcmp(opt, "-f"))
 		{
 			if(opts->function_count >= MAX_FUNCTION_COUNT)
 			{
@@ -69,158 +60,282 @@ static void parse_opts(Options *opts)
 		} else if(!strcmp(opt, "-b"))
 		{
 			opts->bits = atoi(nextarg());
-		} else if(!strcmp(opt, "-m"))
-		{
-			opts->macro_function_name = nextarg();
-		}
-	}
-}
-
-void find_sources(const char *source_path, void (*fn)(const char*))
-{
-	struct dirent *entry;
-	struct stat st;
-	DIR *dir = opendir(source_path);
-
-	if(!dir)
-	{
-		return;
-	}
-
-	while((entry = readdir(dir)) != NULL)
-	{
-		char path[1024];
-		snprintf(path, sizeof(path), "%s/%s", source_path, entry->d_name);
-
-		if(stat(path, &st) == -1)
-		{
-			fprintf(stderr, "stat error\n");
-			exit(-1);
-		}
-
-		if(S_ISDIR(st.st_mode))
-		{
-			if(strcmp(entry->d_name, ".") && strcmp(entry->d_name, ".."))
-			{
-				find_sources(path, fn);
-			}
-			continue;
-		}
-		char *ext = strrchr(entry->d_name, '.');
-		if(!ext)
-			continue;
-		if(strcmp(ext, ".c") && strcmp(ext, ".h") && strcmp(ext, ".cpp") && strcmp(ext, ".cc") && strcmp(ext, ".hpp") && strcmp(ext, ".hxx"))
-			continue;
-		fn(path);
-	}
-
-	closedir(dir);
-}
-
-static HashTable strings;
-static HashTable reverse;
-
-LEXER_STATIC int cond_rparen(u8 ch, int *undo)
-{
-	*undo = 0;
-	return ch == ')';
-}
-
-void on_source_file(const char *path)
-{
-	Stream s = {0};
-	if(stream_open_file(&s, path, "r"))
-	{
-		fprintf(stderr, "Failed to open file '%s'\n", path);
-		exit(-1);
-	}
-
-	Lexer l = { 0 };
-	lexer_init(&l, NULL, &s);
-	if(setjmp(l.jmp_error))
-	{
-		fprintf(stderr, "Error while parsing '%s'\n", path);
-		exit(-1);
-	}
-	Token t;
-	char ident[256];
-	while(!lexer_step(&l, &t))
-	{
-		if(t.token_type != TOKEN_TYPE_IDENTIFIER)
-			continue;
-		bool found = false;
-		for(size_t k = 0; k < opts.function_count; ++k)
-		{
-			if(opts.function_hashes[k] == t.hash)
-			{
-				found = true;
-				break;
-			}
-		}
-		if(!found)
-			continue;
-		// lexer_token_read_string(&l, &t, ident, sizeof(ident));
-		if(lexer_accept(&l, '(', NULL))
-			continue;
-		while(!lexer_step(&l, &t))
-		{
-			if(t.token_type == ')')
-				break;
-			if(t.token_type != TOKEN_TYPE_IDENTIFIER)
-				continue;
-			// lexer_read_characters(&l, &t, 0, cond_rparen);
-			lexer_token_read_string(&l, &t, ident, sizeof(ident));
-			// printf("found in %s '%s'\n", path, ident);
-			HashTableEntry *stringentry = hash_table_insert(&strings, ident);
-			// Check for collisions
-			uint32_t hash = fnv1a_32(ident);
-			char hashstr[16];
-			snprintf(hashstr, sizeof(hashstr), "%08x", hash);
-			HashTableEntry *entry = hash_table_insert(&reverse, ident);
-			if(entry->value && stringentry->key != entry->value)
-			{
-				stream_close_file(&s);
-				fprintf(stderr, "ERROR: Hash collision found for string '%s' and '%s'\n", ident, entry->value);
-				exit(-1);
-			}
-			entry->value = stringentry->key;
-		}
-	}
-	stream_close_file(&s);
-}
-
-static void generate_header()
-{
-	printf("#pragma once\n");
-	printf("// This header file was automatically generated.\n");
-	printf("// Arguments: ");
-	for(size_t i = 0; i < argc; ++i)
-	{
-		printf("%s ", argv[i]);
-	}
-	printf("\n");
-	printf("#include <stdint.h>\n");
-	printf("#define %s(name) (_CT_HASH_ ## name)\n", opts.macro_function_name);
-	printf("enum // %d entries\n{\n", strings.length);
-	HashTableEntry *tail = strings.tail;
-	while(tail)
-	{
-		if(opts.bits == 32)
-		{
-			uint32_t hash = fnv1a_32(tail->key);
-			printf("\t_CT_HASH_%s = UINT32_C(0x%08x),\n", tail->key, hash);
 		} else
 		{
-			uint64_t hash = fnv1a_64(tail->key);
-			printf("\t_CT_HASH_%s = UINT64_C(0x%" PRIx64 "),\n", tail->key, hash);
+			if(opts->input_index == -1)
+				opts->input_index = argi;
 		}
-		tail = tail->prev;
 	}
-	if(opts.bits == 32)
-		printf("\t_CT_HASH_ = UINT32_C(0x0)\n");
-	else
-		printf("\t_CT_HASH_ = UINT64_C(0x0)\n");
-	printf("};\n");
+}
+
+typedef struct
+{
+	uint64_t prime, offset;
+	uint64_t value;
+} hash_t;
+
+static void hash_clear(hash_t *h)
+{
+	h->value = h->offset;
+}
+
+static void hash_init(hash_t *h)
+{
+	h->prime = 0x00000100000001B3;
+	h->offset = 0xcbf29ce484222325;
+	hash_clear(h);
+}
+
+static void hash_push_back(hash_t *h, unsigned char c)
+{
+	h->value ^= c;
+	h->value *= h->prime;
+}
+
+static hash_t string_hash(const char *str)
+{
+	hash_t h;
+	hash_init(&h);
+	for(const char *p = str; *p; ++p)
+	{
+		hash_push_back(&h, *p);
+	}
+	return h;
+}
+
+static bool ident_char(int c)
+{
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '$';
+}
+
+static int read_line(Stream *s, char *line, size_t max_line_length, bool *carriage_return)
+{
+	*carriage_return = false;
+	size_t n = 0;
+	line[n] = 0;
+
+	int eol = 0;
+	int eof = 0;
+	size_t offset = 0;
+	while(!eol)
+	{
+		uint8_t ch = 0;
+		if(0 == s->read(s, &ch, 1, 1) || !ch)
+		{
+			// If we haven't read anything yet then this is the "real" EOF
+			// Had we encountered a \0 or EOF at the end of a line then it would have been one line too early
+			if(n == 0)
+				eof = 1;
+			break;
+		}
+		if(n + 1 >= max_line_length) // n + 1 account for \0
+		{
+			fprintf(stderr, "Error line length %d is larger than the maximum length of a line.\n", max_line_length);
+			exit(-1);
+		}
+		switch(ch)
+		{
+			case '\r': *carriage_return = true; break;
+			case '\n': eol = 1; break;
+			default:
+				*carriage_return = false;
+				line[n++] = ch;
+				break;
+		}
+	}
+	line[n] = 0;
+	return eof;
+}
+
+void remove_quotes_in_place(char *str)
+{
+	size_t j = 0;
+	for(size_t i = 0; str[i]; i++)
+	{
+		if(str[i] != '\'' && str[i] != '"')
+			str[j++] = str[i];
+	}
+	str[j] = 0;
+}
+
+static void process_line(const char *path, const char *line, int line_number, Stream *out, size_t *num_processed)
+{
+	Stream s = { 0 };
+	StreamBuffer sb = { 0 };
+	init_stream_from_buffer(&s, &sb, (unsigned char*)line, strlen(line) + 1);
+	Lexer l = { 0 };
+	lexer_init(&l, NULL, &s);
+	l.out = stderr;
+	l.flags |= LEXER_FLAG_TOKENIZE_WHITESPACE;
+	l.flags |= LEXER_FLAG_TOKEN_TYPE_MULTILINE_COMMENT_ENABLED;
+	l.flags |= LEXER_FLAG_STRING_RAW;
+	if(setjmp(l.jmp_error))
+	{
+		fprintf(stderr, "Error while parsing '%s' on line '%s'\n", path, line);
+		exit(-1);
+	}
+	// printf("%d: ", line_number);
+	Token t;
+	char temp[2048];
+	char string[2048];
+	while(!lexer_step(&l, &t))
+	{
+		char str[256];
+		if(t.token_type == '\n')
+			continue;
+		bool found = false;
+		if(t.token_type == TOKEN_TYPE_IDENTIFIER)
+		{
+			for(size_t i = 0; i < opts.function_count; ++i)
+			{
+				if(opts.function_hashes[i] == t.hash)
+				{
+					found = true;
+					break;
+				}
+			}
+		}
+		lexer_token_read_string(&l, &t, temp, sizeof(temp));
+		// if(t.token_type == TOKEN_TYPE_STRING)
+		// 	stream_printf(out, "\"%s\"", temp);
+		// else
+		if(t.token_type == TOKEN_TYPE_COMMENT)
+		{
+			stream_printf(out, "//%s", temp);
+		}
+		else if(t.token_type == TOKEN_TYPE_MULTILINE_COMMENT)
+		{
+			if(strlen(temp) > 0)
+				stream_printf(out, "/*%s*/", temp);
+			else
+				stream_printf(out, "/*");
+		}
+		else
+		{
+			stream_printf(out, "%s", temp);
+		}
+		s64 save = s.tell(&s);
+		Token ts;
+		if(found)
+		{
+			l.flags &= ~LEXER_FLAG_TOKENIZE_WHITESPACE;
+			lexer_expect(&l, '(', NULL);
+			lexer_step(&l, &ts);
+			if(ts.token_type != TOKEN_TYPE_STRING && ts.token_type != TOKEN_TYPE_IDENTIFIER)
+				lexer_error(&l, "Expected string or identifier");
+			lexer_token_read_string(&l, &ts, string, sizeof(string));
+			lexer_expect(&l, ',', NULL);
+			Token tn;
+			if(!lexer_accept(&l, TOKEN_TYPE_NUMBER, &tn))
+			{
+				unsigned long long current_hash = lexer_token_read_int(&l, &tn);
+
+				if(opts.bits == 32)
+				{
+					if(fnv1a_32(string) == (uint32_t)current_hash)
+					{
+						goto skip;
+					}
+				} else
+				{
+					if(fnv1a_64(string) == (uint64_t)current_hash)
+					{
+						goto skip;
+					}
+				}
+
+				if(ts.token_type == TOKEN_TYPE_IDENTIFIER)
+				{
+					stream_printf(out, "(%s", string);
+				} else
+				{
+					remove_quotes_in_place(string);
+					stream_printf(out, "(\"%s\"", string);
+				}
+				if(opts.bits == 32)
+				{
+					uint32_t string_hash = fnv1a_32(string);
+					// printf("%x -> %x\n", current_hash, string_hash);
+					stream_printf(out, ", 0x%" PRIx32 "", string_hash);
+				} else
+				{
+					uint64_t string_hash = fnv1a_64(string);
+					// printf("%x -> %x\n", current_hash, string_hash);
+					stream_printf(out, ", 0x%" PRIx64 "", string_hash);
+				}
+				*num_processed += 1;
+			} else
+			{
+				skip:
+					s.seek(&s, save, SEEK_SET);
+			}
+
+			l.flags |= LEXER_FLAG_TOKENIZE_WHITESPACE;
+			// getchar();
+		}
+		// printf("%s", token_type_to_string(t.token_type, str, sizeof(str)));
+	}
+	// printf("// %s", line);
+	// stream_printf(out, "\n");
+	// getchar();
+}
+
+bool sb_grow_(struct StreamBuffer_s*, size_t size)
+{
+	fprintf(stderr, "Out of memory, this shouldn't happen.");
+	exit(-1);
+	return false;
+}
+
+static bool process_source_file(const char *path)
+{
+	FILE *fp = fopen(path, "r");
+	if(!fp)
+	{
+		return false;
+	}
+	fseek(fp, 0, SEEK_END);
+	long size = ftell(fp);
+	rewind(fp);
+	Stream s_out = {0};
+	StreamBuffer sb_out = {0};
+	char *out_buf = malloc(size * 2);
+	memset(out_buf, 0, size * 2);
+	init_stream_from_buffer(&s_out, &sb_out, out_buf, size * 2);
+	sb_out.grow = sb_grow_;
+
+	Stream s = {0};
+	StreamFile sf = { 0 };
+	init_stream_from_file(&s, &sf, fp);
+
+	hash_t needle = string_hash("CT_HASH");
+
+	bool cr;
+	char line[2048];
+	int line_number = 0;
+	size_t num_processed = 0;
+	while(!read_line(&s, line, sizeof(line), &cr))
+	{
+		// printf("%s\n", line);
+		process_line(path, line, line_number++, &s_out, &num_processed);
+		// if(cr)
+		// {
+		// 	stream_printf(&s_out, "\r\n");
+		// } else
+		{
+			stream_printf(&s_out, "\n");
+		}
+	}
+	fclose(fp);
+	if(num_processed > 0)
+	{
+		printf("Processing: '%s'\n", path);
+		fp = fopen(path, "w");
+		fwrite(out_buf, 1, strlen(out_buf), fp);
+		fclose(fp);
+		// printf("%s", out_buf);
+	}
+	return true;
 }
 
 int main(int argc_, char **argv_, char **envp)
@@ -229,18 +344,20 @@ int main(int argc_, char **argv_, char **envp)
 	argv = argv_;
 	parse_opts(&opts);
 
-	if(0 == opts.searchpath_count)
+	if(opts.input_index == -1)
 	{
-		fprintf(stderr, "No search path given, use -d <path>\n");
+		fprintf(stderr, "No input files.\n");
 		exit(-1);
 	}
-
-	hash_table_init(&strings, 16); // Increase if you need more strings
-	hash_table_init(&reverse, 16);
-	for(size_t k = 0; k < opts.searchpath_count; ++k)
+	for(int i = opts.input_index; i < argc_; ++i)
 	{
-		find_sources(opts.search_paths[k], on_source_file);
+		const char *path = argv_[i];
+		// printf("Processing: '%s'\n", path);
+		if(!process_source_file(path))
+		{
+			fprintf(stderr, "Failed to process '%s'\n", path);
+			exit(-1);
+		}
 	}
-	generate_header();
 	return 0;
 }

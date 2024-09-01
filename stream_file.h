@@ -65,6 +65,20 @@ static int stream_seek_(struct Stream_s *s, int64_t offset, int whence)
 	return 0;
 }
 
+static int init_stream_from_file(Stream *s, StreamFile *sf, FILE *fp)
+{
+    sf->fp = fp;
+	sf->path[0] = 0;
+	s->ctx = sf;
+	s->read = stream_read_;
+	s->write = stream_write_;
+	s->eof = stream_eof_;
+	s->name = stream_name_;
+	s->tell = stream_tell_;
+	s->seek = stream_seek_;
+    return 0;
+}
+
 static int stream_open_file(Stream *s, const char *path, const char *mode)
 {
     FILE *fp = fopen(path, mode);

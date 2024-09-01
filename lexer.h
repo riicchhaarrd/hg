@@ -25,6 +25,8 @@ typedef enum
 	TOKEN_TYPE_STRING,
 	TOKEN_TYPE_NUMBER,
 	TOKEN_TYPE_COMMENT,
+	TOKEN_TYPE_MULTILINE_COMMENT,
+	TOKEN_TYPE_WHITESPACE,
 	TOKEN_TYPE_MAX
 } TokenType;
 
@@ -34,7 +36,8 @@ LEXER_STATIC const char *token_type_to_string(TokenType token_type, char *string
 		return "?";
 	if(string_out_size < 2)
 		return "?";
-	if(token_type >= 0x20 && token_type <= /*0x7e*/0xff) // Printable ASCII range
+	if(token_type <= 0xff) // Printable ASCII range
+	// if(token_type >= 0x20 && token_type <= /*0x7e*/0xff) // Printable ASCII range
 	{
 		string_out[0] = token_type & 0xff;
 		string_out[1] = 0;
@@ -42,7 +45,7 @@ LEXER_STATIC const char *token_type_to_string(TokenType token_type, char *string
 	}
 	if(token_type < 256)
 		return "?";
-	static const char *type_strings[] = {"identifier", "string", "number", "comment"};
+	static const char *type_strings[] = {"identifier", "string", "number", "comment", "whitespace"};
 	return type_strings[token_type - 256];
 }
 
@@ -66,10 +69,16 @@ typedef struct Token_s
 
 typedef enum
 {
-	k_ELexerFlagNone = 0,
-	k_ELexerFlagSkipComments = 1,
-	k_ELexerFlagTokenizeNewlines = 2,
-	k_ELexerFlagIdentifierIncludesHyphen = 4
+	LEXER_FLAG_NONE = 0,
+	LEXER_FLAG_SKIP_COMMENTS = 1,
+	LEXER_FLAG_TOKENIZE_NEWLINES = 2,
+	LEXER_FLAG_IDENTIFIER_INCLUDES_HYPHEN = 4,
+	LEXER_FLAG_TOKENIZE_WHITESPACE = 8,
+	LEXER_FLAG_TOKENIZE_WHITESPACE_GROUPED = 16,
+	LEXER_FLAG_TREAT_NEGATIVE_SIGN_AS_NUMBER = 32,
+	LEXER_FLAG_TOKEN_TYPE_MULTILINE_COMMENT_ENABLED = 64,
+	LEXER_FLAG_PRINT_SOURCE_ON_ERROR = 128,
+	LEXER_FLAG_STRING_RAW = 256 // Tries to include quotes, if EOF is reached then the string won't have a closing quote though
 } k_ELexerFlags;
 
 typedef struct
@@ -77,6 +86,7 @@ typedef struct
 	Stream *stream;
 	jmp_buf jmp_error;
 	int flags;
+	FILE *out;
 } Lexer;
 #pragma pack(pop)
 LEXER_STATIC int lexer_step(Lexer *lexer, Token *t);
@@ -84,7 +94,8 @@ LEXER_STATIC int lexer_step(Lexer *lexer, Token *t);
 LEXER_STATIC void lexer_init(Lexer *l, /*deprecated*/void *arena, Stream *stream)
 {
 	l->stream = stream;
-	l->flags = k_ELexerFlagNone;
+	l->flags = LEXER_FLAG_NONE;
+	l->out = stdout;
 }
 
 LEXER_STATIC void lexer_token_read_string(Lexer *lexer, Token *t, char *temp, s32 max_temp_size)
@@ -141,10 +152,13 @@ LEXER_STATIC void lexer_error(Lexer *l, const char *fmt, ...)
 	}
 	Token ft = { 0 };
 	ft.position = l->stream->tell(l->stream);
-	printf("===============================================================\n");
-	lexer_token_print_range_characters(l, &ft, -100, 100);
-	printf("\n===============================================================\n");
-	printf("Lexer error: %s\n", text);
+	if(l->flags & LEXER_FLAG_PRINT_SOURCE_ON_ERROR)
+	{
+		fprintf(l->out, "===============================================================\n");
+		lexer_token_print_range_characters(l, &ft, -100, 100);
+		fprintf(l->out, "\n===============================================================\n");
+	}
+	fprintf(l->out, "Lexer error: %s\n", text);
 	longjmp(l->jmp_error, 1);
 }
 
@@ -190,7 +204,11 @@ LEXER_STATIC Token* lexer_read_string(Lexer *lexer, Token *t)
 			break;
 		}
 		if(ch == '"' && !escaped)
+		{
+			if(lexer->flags & LEXER_FLAG_STRING_RAW)
+				++n;
 			break;
+		}
 		escaped = (!escaped && ch == '\\');
 		//if(n >= sizeof(t->string_value) - 1)
 			//lexer_error(lexer, "n >= sizeof(t->string_value) - 1");
@@ -206,9 +224,9 @@ LEXER_STATIC Token* lexer_read_string(Lexer *lexer, Token *t)
 	return t;
 }
 
-LEXER_STATIC Token* lexer_read_multiline_comment(Lexer *lexer, Token *t)
+LEXER_STATIC Token* lexer_read_multiline_comment(Lexer *lexer, TokenType token_type, Token *t)
 {
-	t->token_type = TOKEN_TYPE_COMMENT;
+	t->token_type = token_type;
 	t->position = lexer->stream->tell(lexer->stream);
 	int n = 0;
 	while(1)
@@ -221,7 +239,6 @@ LEXER_STATIC Token* lexer_read_multiline_comment(Lexer *lexer, Token *t)
 			u8 second = lexer_read_and_advance(lexer);
 			if(second == '/')
 			{
-				n++;
 				break;
 			}
 			lexer_unget(lexer);
@@ -284,7 +301,26 @@ LEXER_STATIC int cond_string(u8 ch, int *undo)
 LEXER_STATIC int cond_numeric(u8 ch, int *undo)
 {
 	*undo = 1;
-	return !(ch >= '0' && ch <= '9') && ch != '.' && ch != 'e' && ch != 'f' && ch != 'x';
+
+	if(ch >= '0' && ch <= '9') // Decimal
+		return 0;
+	
+	if(ch == '.' || ch == 'f') // Floating point and 'f' postfix
+		return 0; 
+
+	if(ch == 'e') // Scientific notation
+		return 0;
+
+	if(ch == 'x') // Hexadecimal separator
+		return 0;
+
+	if(ch >= 'a' && ch <= 'f') // Hexadecimal
+		return 0;
+		
+	if(ch >= 'A' && ch <= 'F') // Hexadecimal
+		return 0;
+
+	return 1;
 }
 LEXER_STATIC int cond_ident(u8 ch, int *undo)
 {
@@ -296,6 +332,11 @@ LEXER_STATIC int cond_single_line_comment(u8 ch, int *undo)
 	*undo = 1;
 	//\0 is implicitly handled by the if(!ch) check in lexer_read_characters
 	return ch == '\r' || ch == '\n';
+}
+LEXER_STATIC int cond_whitespace(u8 ch, int *undo)
+{
+	*undo = 1;
+	return ch == '\r' || ch == '\n' || ch == ' ' || ch == '\t';
 }
 
 LEXER_STATIC int lexer_accept(Lexer *lexer, TokenType tt, Token *t)
@@ -325,12 +366,15 @@ LEXER_STATIC void lexer_expect(Lexer *lexer, TokenType tt, Token *t)
 		t = &_;
 	if(lexer_accept(lexer, tt, t))
 	{
-		printf("===============================================================\n");
-		lexer_token_print_range_characters(lexer, t, -100, 100);
-		printf("\n===============================================================\n");
+		if(lexer->flags & LEXER_FLAG_PRINT_SOURCE_ON_ERROR)
+		{
+			fprintf(lexer->out, "===============================================================\n");
+			lexer_token_print_range_characters(lexer, t, -100, 100);
+			fprintf(lexer->out, "\n===============================================================\n");
+		}
 		char expected[64];
 		char got[64];
-		printf("Expected %s, got %s\n", token_type_to_string(tt, expected, sizeof(expected)), token_type_to_string(t->token_type, got, sizeof(got)));
+		fprintf(lexer->out, "Expected '%s' got '%s'\n", token_type_to_string(tt, expected, sizeof(expected)), token_type_to_string(t->token_type, got, sizeof(got)));
 		longjmp(lexer->jmp_error, 1); // TODO: pass error enum type value
 	}
 }
@@ -355,15 +399,20 @@ repeat:
 	switch(ch)
 	{
 		case '"':
+			if(lexer->flags & LEXER_FLAG_STRING_RAW)
+				lexer_unget(lexer);
 			lexer_read_string(lexer, t);
 		break;
 
-		case '.':
 		case '-': // TODO: add lexer flag
+		if((lexer->flags & LEXER_FLAG_TREAT_NEGATIVE_SIGN_AS_NUMBER) == 0)
+			return 0;
+		case '.':
 		{
 			ch = lexer_read_and_advance(lexer);
 			if(ch >= '0' && ch <= '9')
 			{
+				lexer_unget(lexer);
 				lexer_unget(lexer);
 				lexer_read_characters(lexer, t, TOKEN_TYPE_NUMBER, cond_numeric);
 			} else
@@ -374,12 +423,20 @@ repeat:
 		break;
 		
 		case '\n':
-		if(lexer->flags & k_ELexerFlagTokenizeNewlines)
+		if(lexer->flags & LEXER_FLAG_TOKENIZE_NEWLINES)
 			return 0;
 		case '\t':
 		case ' ':
 		case '\r':
-			goto repeat;
+		if(lexer->flags & LEXER_FLAG_TOKENIZE_WHITESPACE)
+		{
+			if(lexer->flags & LEXER_FLAG_TOKENIZE_WHITESPACE_GROUPED)
+				lexer_read_characters(lexer, t, TOKEN_TYPE_WHITESPACE, cond_whitespace);
+		} else
+		{
+			goto repeat;	
+		}
+		break;
 		case '/':
 		{
 			ch = lexer_read_and_advance(lexer);
@@ -392,8 +449,13 @@ repeat:
 			if(ch == '/')
 				lexer_read_characters(lexer, t, TOKEN_TYPE_COMMENT, cond_single_line_comment);
 			else if(ch == '*')
-				lexer_read_multiline_comment(lexer, t);
-			if(lexer->flags & k_ELexerFlagSkipComments)
+			{
+				if(lexer->flags & LEXER_FLAG_TOKEN_TYPE_MULTILINE_COMMENT_ENABLED)
+					lexer_read_multiline_comment(lexer, TOKEN_TYPE_MULTILINE_COMMENT, t);
+				else
+					lexer_read_multiline_comment(lexer, TOKEN_TYPE_COMMENT, t);
+			}
+			if(lexer->flags & LEXER_FLAG_SKIP_COMMENTS)
 				goto repeat;
 		} break;
 		default:
@@ -411,7 +473,7 @@ repeat:
 				//if(ch >= 0x20 && ch <= 0x7e)
 				if(!(ch >= 0x20 && ch <= 0xff))
 				{
-					printf("%d\n", ch);
+					fprintf(lexer->out, "%d\n", ch);
 					lexer_error(lexer, "Unexpected character");
 				}
 			}
@@ -420,16 +482,17 @@ repeat:
 	return 0;
 }
 
-LEXER_STATIC int lexer_token_read_int(Lexer *lexer, Token *t)
+LEXER_STATIC unsigned long long lexer_token_read_int(Lexer *lexer, Token *t)
 {
 	char str[64];
 	lexer_token_read_string(lexer, t, str, sizeof(str));
 	char *x = strchr(str, 'x');
 	if(x)
 	{
-		return strtoul(x + 1, NULL, 16);
+		return strtoull(x + 1, NULL, 16);
 	}
-	return atoi(str);
+	return strtoull(str, NULL, 10);
+	// return atoi(str);
 }
 
 // https://stackoverflow.com/questions/36430338/maximum-number-of-characters-used-by-a-string-representation-of-an-integer-type

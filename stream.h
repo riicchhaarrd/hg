@@ -71,7 +71,7 @@ static int stream_measure_line(Stream *s, size_t *n)
 	return eof;
 }
 
-static int stream_read_line(Stream *s, char *line, size_t max_line_length)
+static int stream_read_line_(Stream *s, char *line, size_t max_line_length, int eol_char, bool ignore_carriage_return)
 {
 	size_t n = 0;
 	line[n] = 0;
@@ -91,15 +91,24 @@ static int stream_read_line(Stream *s, char *line, size_t max_line_length)
 		{
 			break;
 		}
-		switch(ch)
+		if(ch == eol_char)
 		{
-			case '\r': break;
-			case '\n': eol = 1; break;
-			default: line[n++] = ch; break;
+			eol = 1;
+			continue;
+		} else if(ch == '\r')
+		{
+			if(ignore_carriage_return)
+				continue;
 		}
+		line[n++] = ch;
 	}
 	line[n] = 0;
 	return eof;
+}
+
+static int stream_read_line(Stream *s, char *line, size_t max_line_length)
+{
+	return stream_read_line_(s, line, max_line_length, '\n', true);
 }
 
 static void stream_unget(Stream *s)
