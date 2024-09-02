@@ -51,7 +51,9 @@ static int stream_measure_line(Stream *s, size_t *n)
 		}
 		switch(ch)
 		{
-			case '\r': eol = 1; break; // In this case, match \r as eol because we don't want carriage returns in our output.
+			case '\r':
+				eol = 1;
+				break; // In this case, match \r as eol because we don't want carriage returns in our output.
 			case '\n': eol = 1; break;
 			default: *n += 1; break;
 		}
@@ -83,7 +85,8 @@ static int stream_read_line_(Stream *s, char *line, size_t max_line_length, int 
 		{
 			eol = 1;
 			continue;
-		} else if(ch == '\r')
+		}
+		else if(ch == '\r')
 		{
 			if(ignore_carriage_return)
 				continue;

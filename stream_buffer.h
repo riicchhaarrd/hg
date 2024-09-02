@@ -6,9 +6,9 @@
 
 typedef struct StreamBuffer_s
 {
-	size_t offset, length;//, capacity;
+	size_t offset, length; //, capacity;
 	unsigned char *buffer;
-	bool (*grow)(struct StreamBuffer_s*, size_t size);
+	bool (*grow)(struct StreamBuffer_s *, size_t size);
 } StreamBuffer;
 
 static size_t stream_read_buffer_(struct Stream_s *stream, void *ptr, size_t size, size_t nmemb)
@@ -64,10 +64,10 @@ static int64_t stream_tell_buffer_(struct Stream_s *s)
 	return sd->offset;
 }
 #ifndef MIN
-#define MIN(a,b) ((a) > (b) ? (b) : (a))
+	#define MIN(a, b) ((a) > (b) ? (b) : (a))
 #endif
 #ifndef MAX
-#define MAX(a,b) ((a) < (b) ? (b) : (a))
+	#define MAX(a, b) ((a) < (b) ? (b) : (a))
 #endif
 
 static int stream_seek_buffer_(struct Stream_s *s, int64_t offset, int whence)
@@ -95,7 +95,7 @@ static int stream_seek_buffer_(struct Stream_s *s, int64_t offset, int whence)
 }
 
 static int init_stream_from_stream_buffer(Stream *s, StreamBuffer *sb)
-{	
+{
 	s->ctx = sb;
 	s->read = stream_read_buffer_;
 	s->write = stream_write_buffer_;
@@ -113,7 +113,7 @@ static int init_stream_from_buffer(Stream *s, StreamBuffer *sb, unsigned char *b
 	sb->buffer = buffer;
 	// sb->capacity = length;
 	sb->grow = NULL;
-	
+
 	s->ctx = sb;
 	s->read = stream_read_buffer_;
 	s->write = stream_write_buffer_;
@@ -126,6 +126,6 @@ static int init_stream_from_buffer(Stream *s, StreamBuffer *sb, unsigned char *b
 
 static bool stream_buffer_buffer_grow_realloc(struct StreamBuffer_s *sb, size_t size)
 {
-    sb->buffer = realloc(sb->buffer, size * 2);
-    sb->length = size * 2;
+	sb->buffer = realloc(sb->buffer, size * 2);
+	sb->length = size * 2;
 }

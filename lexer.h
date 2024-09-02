@@ -20,7 +20,7 @@ typedef uint64_t u64;
 
 typedef enum
 {
-	//ASCII table ...
+	// ASCII table ...
 	TOKEN_TYPE_IDENTIFIER = 256,
 	TOKEN_TYPE_STRING,
 	TOKEN_TYPE_NUMBER,
@@ -45,7 +45,7 @@ LEXER_STATIC const char *token_type_to_string(TokenType token_type, char *string
 	}
 	if(token_type < 256)
 		return "?";
-	static const char *type_strings[] = {"identifier", "string", "number", "comment", "whitespace"};
+	static const char *type_strings[] = { "identifier", "string", "number", "comment", "whitespace" };
 	return type_strings[token_type - 256];
 }
 
@@ -69,7 +69,8 @@ typedef enum
 	LEXER_FLAG_TREAT_NEGATIVE_SIGN_AS_NUMBER = 32,
 	LEXER_FLAG_TOKEN_TYPE_MULTILINE_COMMENT_ENABLED = 64,
 	LEXER_FLAG_PRINT_SOURCE_ON_ERROR = 128,
-	LEXER_FLAG_STRING_RAW = 256 // Tries to include quotes, if EOF is reached then the string won't have a closing quote though
+	LEXER_FLAG_STRING_RAW =
+		256 // Tries to include quotes, if EOF is reached then the string won't have a closing quote though
 } k_ELexerFlags;
 
 typedef struct
@@ -82,7 +83,7 @@ typedef struct
 
 LEXER_STATIC int lexer_step(Lexer *lexer, Token *t);
 
-LEXER_STATIC void lexer_init(Lexer *l, /*deprecated*/void *arena, Stream *stream)
+LEXER_STATIC void lexer_init(Lexer *l, /*deprecated*/ void *arena, Stream *stream)
 {
 	l->stream = stream;
 	l->flags = LEXER_FLAG_NONE;
@@ -166,8 +167,7 @@ LEXER_STATIC void lexer_unget(Lexer *l)
 	l->stream->seek(l->stream, current - 1, SEEK_SET);
 }
 
-
-LEXER_STATIC Token* lexer_read_string(Lexer *lexer, Token *t)
+LEXER_STATIC Token *lexer_read_string(Lexer *lexer, Token *t)
 {
 	// https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function
 	u64 prime = 0x00000100000001B3;
@@ -184,7 +184,7 @@ LEXER_STATIC Token* lexer_read_string(Lexer *lexer, Token *t)
 		u8 ch = lexer_read_and_advance(lexer);
 		if(!ch)
 		{
-			//lexer_error(lexer, "Unexpected EOF");
+			// lexer_error(lexer, "Unexpected EOF");
 			break;
 		}
 		if(ch == '"' && !escaped)
@@ -195,7 +195,7 @@ LEXER_STATIC Token* lexer_read_string(Lexer *lexer, Token *t)
 		}
 		escaped = (!escaped && ch == '\\');
 		++n;
-		
+
 		hash ^= ch;
 		hash *= prime;
 	}
@@ -204,7 +204,7 @@ LEXER_STATIC Token* lexer_read_string(Lexer *lexer, Token *t)
 	return t;
 }
 
-LEXER_STATIC Token* lexer_read_multiline_comment(Lexer *lexer, TokenType token_type, Token *t)
+LEXER_STATIC Token *lexer_read_multiline_comment(Lexer *lexer, TokenType token_type, Token *t)
 {
 	t->token_type = token_type;
 	t->position = lexer->stream->tell(lexer->stream);
@@ -230,7 +230,7 @@ LEXER_STATIC Token* lexer_read_multiline_comment(Lexer *lexer, TokenType token_t
 	return t;
 }
 
-LEXER_STATIC Token* lexer_read_characters(Lexer *lexer, Token *t, TokenType token_type, int (*cond)(u8 ch, int* undo))
+LEXER_STATIC Token *lexer_read_characters(Lexer *lexer, Token *t, TokenType token_type, int (*cond)(u8 ch, int *undo))
 {
 	// https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function
 	u64 prime = 0x00000100000001B3;
@@ -246,7 +246,7 @@ LEXER_STATIC Token* lexer_read_characters(Lexer *lexer, Token *t, TokenType toke
 		u8 ch = lexer_read_and_advance(lexer);
 		if(!ch)
 		{
-			//lexer_error(lexer, "Unexpected EOF");
+			// lexer_error(lexer, "Unexpected EOF");
 			break;
 		}
 		int undo = 0;
@@ -259,7 +259,7 @@ LEXER_STATIC Token* lexer_read_characters(Lexer *lexer, Token *t, TokenType toke
 			break;
 		}
 		++n;
-		
+
 		hash ^= ch;
 		hash *= prime;
 	}
@@ -279,9 +279,9 @@ LEXER_STATIC int cond_numeric(u8 ch, int *undo)
 
 	if(ch >= '0' && ch <= '9') // Decimal
 		return 0;
-	
+
 	if(ch == '.' || ch == 'f') // Floating point and 'f' postfix
-		return 0; 
+		return 0;
 
 	if(ch == 'e') // Scientific notation
 		return 0;
@@ -291,7 +291,7 @@ LEXER_STATIC int cond_numeric(u8 ch, int *undo)
 
 	if(ch >= 'a' && ch <= 'f') // Hexadecimal
 		return 0;
-		
+
 	if(ch >= 'A' && ch <= 'F') // Hexadecimal
 		return 0;
 
@@ -349,7 +349,10 @@ LEXER_STATIC void lexer_expect(Lexer *lexer, TokenType tt, Token *t)
 		}
 		char expected[64];
 		char got[64];
-		fprintf(lexer->out, "Expected '%s' got '%s'\n", token_type_to_string(tt, expected, sizeof(expected)), token_type_to_string(t->token_type, got, sizeof(got)));
+		fprintf(lexer->out,
+				"Expected '%s' got '%s'\n",
+				token_type_to_string(tt, expected, sizeof(expected)),
+				token_type_to_string(t->token_type, got, sizeof(got)));
 		longjmp(lexer->jmp_error, 1); // TODO: pass error enum type value
 	}
 }
@@ -357,7 +360,7 @@ LEXER_STATIC void lexer_expect(Lexer *lexer, TokenType tt, Token *t)
 LEXER_STATIC int lexer_step(Lexer *lexer, Token *t)
 {
 	s64 index;
-	
+
 	t->next = NULL;
 	t->length = 1;
 
@@ -365,7 +368,7 @@ LEXER_STATIC int lexer_step(Lexer *lexer, Token *t)
 repeat:
 	index = lexer->stream->tell(lexer->stream);
 	t->position = index;
-	
+
 	ch = lexer_read_and_advance(lexer);
 	if(!ch)
 		return 1;
@@ -377,11 +380,11 @@ repeat:
 			if(lexer->flags & LEXER_FLAG_STRING_RAW)
 				lexer_unget(lexer);
 			lexer_read_string(lexer, t);
-		break;
+			break;
 
 		case '-': // TODO: add lexer flag
-		if((lexer->flags & LEXER_FLAG_TREAT_NEGATIVE_SIGN_AS_NUMBER) == 0)
-			return 0;
+			if((lexer->flags & LEXER_FLAG_TREAT_NEGATIVE_SIGN_AS_NUMBER) == 0)
+				return 0;
 		case '.':
 		{
 			ch = lexer_read_and_advance(lexer);
@@ -390,28 +393,30 @@ repeat:
 				lexer_unget(lexer);
 				lexer_unget(lexer);
 				lexer_read_characters(lexer, t, TOKEN_TYPE_NUMBER, cond_numeric);
-			} else
+			}
+			else
 			{
 				lexer_unget(lexer);
 			}
 		}
 		break;
-		
+
 		case '\n':
-		if(lexer->flags & LEXER_FLAG_TOKENIZE_NEWLINES)
-			return 0;
+			if(lexer->flags & LEXER_FLAG_TOKENIZE_NEWLINES)
+				return 0;
 		case '\t':
 		case ' ':
 		case '\r':
-		if(lexer->flags & LEXER_FLAG_TOKENIZE_WHITESPACE)
-		{
-			if(lexer->flags & LEXER_FLAG_TOKENIZE_WHITESPACE_GROUPED)
-				lexer_read_characters(lexer, t, TOKEN_TYPE_WHITESPACE, cond_whitespace);
-		} else
-		{
-			goto repeat;	
-		}
-		break;
+			if(lexer->flags & LEXER_FLAG_TOKENIZE_WHITESPACE)
+			{
+				if(lexer->flags & LEXER_FLAG_TOKENIZE_WHITESPACE_GROUPED)
+					lexer_read_characters(lexer, t, TOKEN_TYPE_WHITESPACE, cond_whitespace);
+			}
+			else
+			{
+				goto repeat;
+			}
+			break;
 		case '/':
 		{
 			ch = lexer_read_and_advance(lexer);
@@ -431,27 +436,31 @@ repeat:
 			}
 			if(lexer->flags & LEXER_FLAG_SKIP_COMMENTS)
 				goto repeat;
-		} break;
+		}
+		break;
 		default:
 		{
 			if(ch >= '0' && ch <= '9')
 			{
 				lexer_unget(lexer);
 				lexer_read_characters(lexer, t, TOKEN_TYPE_NUMBER, cond_numeric);
-			} else if((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_')
+			}
+			else if((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_')
 			{
 				lexer_unget(lexer);
 				lexer_read_characters(lexer, t, TOKEN_TYPE_IDENTIFIER, cond_ident);
-			} else
+			}
+			else
 			{
-				//if(ch >= 0x20 && ch <= 0x7e)
+				// if(ch >= 0x20 && ch <= 0x7e)
 				if(!(ch >= 0x20 && ch <= 0xff))
 				{
 					fprintf(lexer->out, "%d\n", ch);
 					lexer_error(lexer, "Unexpected character");
 				}
 			}
-		} break;
+		}
+		break;
 	}
 	return 0;
 }
@@ -492,7 +501,9 @@ LEXER_STATIC void lexer_text(Lexer *l, char *str, size_t max_str)
 	char got[64];
 	if(t.token_type != TOKEN_TYPE_IDENTIFIER && t.token_type != TOKEN_TYPE_STRING && t.token_type != TOKEN_TYPE_NUMBER)
 	{
-		lexer_error(l, "Expected identifier, string or number got %s", token_type_to_string(t.token_type, got, sizeof(got)));
+		lexer_error(l,
+					"Expected identifier, string or number got %s",
+					token_type_to_string(t.token_type, got, sizeof(got)));
 	}
 	lexer_token_read_string(l, &t, str, max_str);
 }

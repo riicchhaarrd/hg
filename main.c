@@ -98,7 +98,8 @@ static void parse_opts(int argc, const char **argv, Options *opts)
 		else if(!strcmp(opt, "-b"))
 		{
 			opts->bits = atoi(nextarg(argc, argv, &i));
-		} else
+		}
+		else
 		{
 			if(opts->input_index == -1)
 				opts->input_index = i;
@@ -156,11 +157,16 @@ static void remove_quotes_in_place(char *str)
 	str[j] = 0;
 }
 
-static void process_line(Options *opts, const char *path, const char *line, int line_number, Stream *out, size_t *num_processed)
+static void process_line(Options *opts,
+						 const char *path,
+						 const char *line,
+						 int line_number,
+						 Stream *out,
+						 size_t *num_processed)
 {
 	Stream s = { 0 };
 	StreamBuffer sb = { 0 };
-	init_stream_from_buffer(&s, &sb, (unsigned char*)line, strlen(line) + 1);
+	init_stream_from_buffer(&s, &sb, (unsigned char *)line, strlen(line) + 1);
 	Lexer l = { 0 };
 	lexer_init(&l, NULL, &s);
 	l.out = stderr;
@@ -223,7 +229,8 @@ static void process_line(Options *opts, const char *path, const char *line, int 
 					{
 						goto skip;
 					}
-				} else
+				}
+				else
 				{
 					if(fnv1a_64(string) == (uint64_t)current_hash)
 					{
@@ -234,7 +241,8 @@ static void process_line(Options *opts, const char *path, const char *line, int 
 				if(ts.token_type == TOKEN_TYPE_IDENTIFIER)
 				{
 					stream_printf(out, "(%s", string);
-				} else
+				}
+				else
 				{
 					remove_quotes_in_place(string);
 					stream_printf(out, "(\"%s\"", string);
@@ -242,15 +250,17 @@ static void process_line(Options *opts, const char *path, const char *line, int 
 				if(opts->bits == 32)
 				{
 					stream_printf(out, ", 0x%" PRIx32 "", fnv1a_32(string));
-				} else
+				}
+				else
 				{
 					stream_printf(out, ", 0x%" PRIx64 "", fnv1a_64(string));
 				}
 				*num_processed += 1;
-			} else
+			}
+			else
 			{
-				skip:
-					s.seek(&s, save, SEEK_SET);
+			skip:
+				s.seek(&s, save, SEEK_SET);
 			}
 
 			l.flags |= LEXER_FLAG_TOKENIZE_WHITESPACE;
@@ -258,7 +268,7 @@ static void process_line(Options *opts, const char *path, const char *line, int 
 	}
 }
 
-static bool sb_grow_(struct StreamBuffer_s*, size_t size)
+static bool sb_grow_(struct StreamBuffer_s *, size_t size)
 {
 	fprintf(stderr, "Out of memory, this shouldn't happen.");
 	exit(-1);
@@ -275,14 +285,14 @@ static bool process_source_file(Options *opts, const char *path)
 	fseek(fp, 0, SEEK_END);
 	long size = ftell(fp);
 	rewind(fp);
-	Stream s_out = {0};
-	StreamBuffer sb_out = {0};
+	Stream s_out = { 0 };
+	StreamBuffer sb_out = { 0 };
 	char *out_buf = malloc(size * 2);
 	memset(out_buf, 0, size * 2);
 	init_stream_from_buffer(&s_out, &sb_out, out_buf, size * 2);
 	sb_out.grow = sb_grow_;
 
-	Stream s = {0};
+	Stream s = { 0 };
 	StreamFile sf = { 0 };
 	init_stream_from_file(&s, &sf, fp);
 
