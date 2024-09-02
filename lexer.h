@@ -176,7 +176,7 @@ LEXER_STATIC Token *lexer_read_string(Lexer *lexer, Token *t)
 	u64 hash = offset;
 
 	t->token_type = TOKEN_TYPE_STRING;
-	t->position = lexer->stream->tell(lexer->stream);
+	// t->position = lexer->stream->tell(lexer->stream);
 	int n = 0;
 	int escaped = 0;
 	while(1)
@@ -189,8 +189,6 @@ LEXER_STATIC Token *lexer_read_string(Lexer *lexer, Token *t)
 		}
 		if(ch == '"' && !escaped)
 		{
-			if(lexer->flags & LEXER_FLAG_STRING_RAW)
-				++n;
 			break;
 		}
 		escaped = (!escaped && ch == '\\');
@@ -377,9 +375,15 @@ repeat:
 	switch(ch)
 	{
 		case '"':
-			if(lexer->flags & LEXER_FLAG_STRING_RAW)
-				lexer_unget(lexer);
+			if(!(lexer->flags & LEXER_FLAG_STRING_RAW))
+			{
+				t->position = lexer->stream->tell(lexer->stream);
+			}
 			lexer_read_string(lexer, t);
+			if(lexer->flags & LEXER_FLAG_STRING_RAW)
+			{
+				t->length = lexer->stream->tell(lexer->stream) - t->position;
+			}
 			break;
 
 		case '-': // TODO: add lexer flag
