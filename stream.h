@@ -5,28 +5,16 @@
 #include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
-/* #include <string.h> */
 
 enum
 {
 	STREAM_SEEK_BEG,
-	/* STREAM_SEEK_SET, */
 	STREAM_SEEK_CUR,
 	STREAM_SEEK_END
 };
 
-/* enum */
-/* { */
-/* 	STREAM_RESULT_OK, */
-/* 	STREAM_RESULT_ERR, */
-/* }; */
-
-/* typedef int32_t StreamResult; */
 typedef struct Stream_s
 {
-	/* char filename[256]; */
-	/* unsigned char *buffer; */
-	/* unsigned int offset, length; */
 	void *ctx;
 
 	int64_t (*tell)(struct Stream_s *s);
@@ -183,38 +171,3 @@ static void stream_skip_characters(Stream *s, const char *chars)
 		}
 	}
 }
-
-/* static size_t stream_read_(struct Stream_s *stream, void *ptr, size_t size, size_t nmemb) */
-/* { */
-/* 	size_t nb = size * nmemb; */
-/* 	if(stream->offset + nb >= stream->length) */
-/* 		return 0; // EOF */
-/* 	memcpy(ptr, &stream->buffer[stream->offset], nb); */
-/* 	stream->offset += nb; */
-/* 	return nb; */
-/* } */
-
-/* static int stream_from_memory(Stream *stream, void *ptr, size_t size, const char *filename) */
-/* { */
-/* 	stream->buffer = ptr; */
-/* 	stream->length = size; */
-/* 	stream->offset = 0; */
-/* 	stream->read = stream_read_; */
-/* 	if(filename) */
-/* 	{ */
-/* 		snprintf(stream->filename, sizeof(stream->filename), "%s", filename); */
-/* 	} */
-/* 	return 0; */
-/* } */
-#if 0
-int stream_open(Stream *stream, const char *filename, const char *mode)
-{
-	//...
-	return 1;
-}
-
-void stream_close(Stream *stream)
-{
-	//...
-}
-#endif

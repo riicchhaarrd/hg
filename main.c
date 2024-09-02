@@ -8,104 +8,102 @@
 #include <inttypes.h>
 
 #include "lexer.h"
-#include "hash_table.h"
 #include "stream.h"
 #include "stream_file.h"
 #include "stream_buffer.h"
 
-int argc;
-char **argv;
-size_t argi;
+// https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function
 
-#define MAX_FUNCTION_COUNT (16)
+static uint32_t fnv1a_32(const char *str)
+{
+	uint32_t prime = 0x01000193;
+	uint32_t offset = 0x811c9dc5;
+
+	uint32_t hash = offset;
+	while(*str)
+	{
+		hash ^= *str;
+		hash *= prime;
+		++str;
+	}
+	return hash;
+}
+
+static uint64_t fnv1a_64(const char *str)
+{
+	uint64_t prime = 0x00000100000001B3;
+	uint64_t offset = 0xcbf29ce484222325;
+
+	uint64_t hash = offset;
+	while(*str)
+	{
+		hash ^= *str;
+		hash *= prime;
+		++str;
+	}
+	return hash;
+}
+
+typedef struct Function_s
+{
+	const char *name;
+	u64 hash;
+	struct Function_s *next;
+} Function;
+
 typedef struct
 {
 	int input_index;
-	const char *functions[MAX_FUNCTION_COUNT];
-	u64 function_hashes[MAX_FUNCTION_COUNT];
-	size_t function_count;
+	Function *functions;
 	int bits;
 } Options;
 
-static Options opts = { .bits = 32, .input_index = -1 };
-
-static const char *nextarg()
+// Fast enough, could use a hash map or array (CPU go brrrr) instead though
+static Function *function_by_hash(Options *opts, uint64_t hash)
 {
-	if(argi + 1 >= argc)
+	Function *f = opts->functions;
+	while(f)
 	{
-		fprintf(stderr, "Expected argument for option '%s'\n", argv[argi]);
-		exit(-1);
+		if(f->hash == hash)
+			return f;
+		f = f->next;
 	}
-	return argv[++argi];
+	return NULL;
 }
 
-static void parse_opts(Options *opts)
+static const char *nextarg(int argc, const char **argv, int *i)
 {
-	for(argi = 1; argi < argc; ++argi)
+	if(*i + 1 >= argc)
 	{
-		const char *opt = argv[argi];
+		fprintf(stderr, "Expected argument for option '%s'\n", argv[*i]);
+		exit(-1);
+	}
+	return argv[++(*i)];
+}
+
+static void parse_opts(int argc, const char **argv, Options *opts)
+{
+	for(int i = 1; i < argc; ++i)
+	{
+		const char *opt = argv[i];
 
 		if(!strcmp(opt, "-f"))
 		{
-			if(opts->function_count >= MAX_FUNCTION_COUNT)
-			{
-				fprintf(stderr, "Max function count reached\n");
-				exit(-1);
-			}
-			const char *arg = nextarg();
-			opts->functions[opts->function_count] = arg;
-			opts->function_hashes[opts->function_count] = fnv1a_64(arg);
-
-			++opts->function_count;
-		} else if(!strcmp(opt, "-b"))
+			Function *f = malloc(sizeof(Function));
+			f->name = nextarg(argc, argv, &i);
+			f->hash = fnv1a_64(f->name);
+			f->next = opts->functions;
+			opts->functions = f;
+		}
+		else if(!strcmp(opt, "-b"))
 		{
-			opts->bits = atoi(nextarg());
+			opts->bits = atoi(nextarg(argc, argv, &i));
 		} else
 		{
 			if(opts->input_index == -1)
-				opts->input_index = argi;
+				opts->input_index = i;
 		}
 	}
-}
-
-typedef struct
-{
-	uint64_t prime, offset;
-	uint64_t value;
-} hash_t;
-
-static void hash_clear(hash_t *h)
-{
-	h->value = h->offset;
-}
-
-static void hash_init(hash_t *h)
-{
-	h->prime = 0x00000100000001B3;
-	h->offset = 0xcbf29ce484222325;
-	hash_clear(h);
-}
-
-static void hash_push_back(hash_t *h, unsigned char c)
-{
-	h->value ^= c;
-	h->value *= h->prime;
-}
-
-static hash_t string_hash(const char *str)
-{
-	hash_t h;
-	hash_init(&h);
-	for(const char *p = str; *p; ++p)
-	{
-		hash_push_back(&h, *p);
-	}
-	return h;
-}
-
-static bool ident_char(int c)
-{
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '$';
 }
 
 static int read_line(Stream *s, char *line, size_t max_line_length, bool *carriage_return)
@@ -147,7 +145,7 @@ static int read_line(Stream *s, char *line, size_t max_line_length, bool *carria
 	return eof;
 }
 
-void remove_quotes_in_place(char *str)
+static void remove_quotes_in_place(char *str)
 {
 	size_t j = 0;
 	for(size_t i = 0; str[i]; i++)
@@ -158,7 +156,7 @@ void remove_quotes_in_place(char *str)
 	str[j] = 0;
 }
 
-static void process_line(const char *path, const char *line, int line_number, Stream *out, size_t *num_processed)
+static void process_line(Options *opts, const char *path, const char *line, int line_number, Stream *out, size_t *num_processed)
 {
 	Stream s = { 0 };
 	StreamBuffer sb = { 0 };
@@ -174,7 +172,6 @@ static void process_line(const char *path, const char *line, int line_number, St
 		fprintf(stderr, "Error while parsing '%s' on line '%s'\n", path, line);
 		exit(-1);
 	}
-	// printf("%d: ", line_number);
 	Token t;
 	char temp[2048];
 	char string[2048];
@@ -183,22 +180,12 @@ static void process_line(const char *path, const char *line, int line_number, St
 		char str[256];
 		if(t.token_type == '\n')
 			continue;
-		bool found = false;
+		Function *f = NULL;
 		if(t.token_type == TOKEN_TYPE_IDENTIFIER)
 		{
-			for(size_t i = 0; i < opts.function_count; ++i)
-			{
-				if(opts.function_hashes[i] == t.hash)
-				{
-					found = true;
-					break;
-				}
-			}
+			f = function_by_hash(opts, t.hash);
 		}
 		lexer_token_read_string(&l, &t, temp, sizeof(temp));
-		// if(t.token_type == TOKEN_TYPE_STRING)
-		// 	stream_printf(out, "\"%s\"", temp);
-		// else
 		if(t.token_type == TOKEN_TYPE_COMMENT)
 		{
 			stream_printf(out, "//%s", temp);
@@ -216,7 +203,7 @@ static void process_line(const char *path, const char *line, int line_number, St
 		}
 		s64 save = s.tell(&s);
 		Token ts;
-		if(found)
+		if(f)
 		{
 			l.flags &= ~LEXER_FLAG_TOKENIZE_WHITESPACE;
 			lexer_expect(&l, '(', NULL);
@@ -230,7 +217,7 @@ static void process_line(const char *path, const char *line, int line_number, St
 			{
 				unsigned long long current_hash = lexer_token_read_int(&l, &tn);
 
-				if(opts.bits == 32)
+				if(opts->bits == 32)
 				{
 					if(fnv1a_32(string) == (uint32_t)current_hash)
 					{
@@ -252,16 +239,12 @@ static void process_line(const char *path, const char *line, int line_number, St
 					remove_quotes_in_place(string);
 					stream_printf(out, "(\"%s\"", string);
 				}
-				if(opts.bits == 32)
+				if(opts->bits == 32)
 				{
-					uint32_t string_hash = fnv1a_32(string);
-					// printf("%x -> %x\n", current_hash, string_hash);
-					stream_printf(out, ", 0x%" PRIx32 "", string_hash);
+					stream_printf(out, ", 0x%" PRIx32 "", fnv1a_32(string));
 				} else
 				{
-					uint64_t string_hash = fnv1a_64(string);
-					// printf("%x -> %x\n", current_hash, string_hash);
-					stream_printf(out, ", 0x%" PRIx64 "", string_hash);
+					stream_printf(out, ", 0x%" PRIx64 "", fnv1a_64(string));
 				}
 				*num_processed += 1;
 			} else
@@ -271,23 +254,18 @@ static void process_line(const char *path, const char *line, int line_number, St
 			}
 
 			l.flags |= LEXER_FLAG_TOKENIZE_WHITESPACE;
-			// getchar();
 		}
-		// printf("%s", token_type_to_string(t.token_type, str, sizeof(str)));
 	}
-	// printf("// %s", line);
-	// stream_printf(out, "\n");
-	// getchar();
 }
 
-bool sb_grow_(struct StreamBuffer_s*, size_t size)
+static bool sb_grow_(struct StreamBuffer_s*, size_t size)
 {
 	fprintf(stderr, "Out of memory, this shouldn't happen.");
 	exit(-1);
 	return false;
 }
 
-static bool process_source_file(const char *path)
+static bool process_source_file(Options *opts, const char *path)
 {
 	FILE *fp = fopen(path, "r");
 	if(!fp)
@@ -308,23 +286,14 @@ static bool process_source_file(const char *path)
 	StreamFile sf = { 0 };
 	init_stream_from_file(&s, &sf, fp);
 
-	hash_t needle = string_hash("CT_HASH");
-
 	bool cr;
 	char line[2048];
 	int line_number = 0;
 	size_t num_processed = 0;
 	while(!read_line(&s, line, sizeof(line), &cr))
 	{
-		// printf("%s\n", line);
-		process_line(path, line, line_number++, &s_out, &num_processed);
-		// if(cr)
-		// {
-		// 	stream_printf(&s_out, "\r\n");
-		// } else
-		{
-			stream_printf(&s_out, "\n");
-		}
+		process_line(opts, path, line, line_number++, &s_out, &num_processed);
+		stream_printf(&s_out, "\n");
 	}
 	fclose(fp);
 	if(num_processed > 0)
@@ -333,27 +302,24 @@ static bool process_source_file(const char *path)
 		fp = fopen(path, "w");
 		fwrite(out_buf, 1, strlen(out_buf), fp);
 		fclose(fp);
-		// printf("%s", out_buf);
 	}
 	return true;
 }
 
-int main(int argc_, char **argv_, char **envp)
+int main(int argc, const char **argv, char **envp)
 {
-	argc = argc_;
-	argv = argv_;
-	parse_opts(&opts);
+	Options opts = { .bits = 32, .input_index = -1, .functions = NULL };
+	parse_opts(argc, argv, &opts);
 
 	if(opts.input_index == -1)
 	{
 		fprintf(stderr, "No input files.\n");
 		exit(-1);
 	}
-	for(int i = opts.input_index; i < argc_; ++i)
+	for(int i = opts.input_index; i < argc; ++i)
 	{
-		const char *path = argv_[i];
-		// printf("Processing: '%s'\n", path);
-		if(!process_source_file(path))
+		const char *path = argv[i];
+		if(!process_source_file(&opts, path))
 		{
 			fprintf(stderr, "Failed to process '%s'\n", path);
 			exit(-1);

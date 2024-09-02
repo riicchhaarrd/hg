@@ -1,22 +1,22 @@
-#ifndef PARSE_H
-#define PARSE_H
+#pragma once
 
 #include "stream.h"
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdlib.h>
-#include "types.h"
 #include <setjmp.h>
 
+typedef uint8_t u8;
+typedef int8_t s8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef int64_t s64;
+typedef int32_t s32;
+typedef int16_t s16;
+typedef int8_t s8;
+typedef uint64_t u64;
+
 #define LEXER_STATIC static
-
-#define MAX_TOKEN_STRING_LENGTH (64)
-
-/*
-	//TODO: Lexer Modes
-	1. Read entire text into memory + allocate all tokens in memory
-	2. Read entire text into memory + temporary buffer for 1 token which then gets parsed
-	3. Stream text and temporary buffer for tokens
-*/
 
 typedef enum
 {
@@ -49,21 +49,12 @@ LEXER_STATIC const char *token_type_to_string(TokenType token_type, char *string
 	return type_strings[token_type - 256];
 }
 
-#pragma pack(push, 1)
 typedef struct Token_s
 {
 	struct Token_s *next;
 	s64 position;
 	u16 token_type;
 	u64 hash;
-	#if 0
-	union
-	{
-		float numeric_value;
-		char string_value[MAX_TOKEN_STRING_LENGTH];
-	};
-	#endif
-	
 	u16 length;
 } Token;
 
@@ -88,7 +79,7 @@ typedef struct
 	int flags;
 	FILE *out;
 } Lexer;
-#pragma pack(pop)
+
 LEXER_STATIC int lexer_step(Lexer *lexer, Token *t);
 
 LEXER_STATIC void lexer_init(Lexer *l, /*deprecated*/void *arena, Stream *stream)
@@ -117,9 +108,6 @@ LEXER_STATIC u8 lexer_read_and_advance(Lexer *l)
 	if(l->stream->read(l->stream, &buf, 1, 1) != 1)
 		return 0;
 	return buf;
-	//if(l->index < 0 || l->index >= l->size)
-		//return 0;
-	//return l->input_stream[l->index++];
 }
 
 LEXER_STATIC void lexer_token_print_range_characters(Lexer *lexer, Token *t, int range_min, int range_max)
@@ -164,7 +152,7 @@ LEXER_STATIC void lexer_error(Lexer *l, const char *fmt, ...)
 
 LEXER_STATIC void lexer_unget_token(Lexer *l, Token *t)
 {
-	int64_t current = l->stream->tell(l->stream);
+	s64 current = l->stream->tell(l->stream);
 	if(current == 0)
 		return;
 	l->stream->seek(l->stream, t->position, SEEK_SET);
@@ -172,13 +160,10 @@ LEXER_STATIC void lexer_unget_token(Lexer *l, Token *t)
 
 LEXER_STATIC void lexer_unget(Lexer *l)
 {
-	int64_t current = l->stream->tell(l->stream);
+	s64 current = l->stream->tell(l->stream);
 	if(current == 0)
 		return;
 	l->stream->seek(l->stream, current - 1, SEEK_SET);
-//	l->index--;
-//	if(l->index < 0)
-//		l->index = 0;
 }
 
 
@@ -191,7 +176,6 @@ LEXER_STATIC Token* lexer_read_string(Lexer *lexer, Token *t)
 	u64 hash = offset;
 
 	t->token_type = TOKEN_TYPE_STRING;
-	//t->position = lexer->index;
 	t->position = lexer->stream->tell(lexer->stream);
 	int n = 0;
 	int escaped = 0;
@@ -210,16 +194,12 @@ LEXER_STATIC Token* lexer_read_string(Lexer *lexer, Token *t)
 			break;
 		}
 		escaped = (!escaped && ch == '\\');
-		//if(n >= sizeof(t->string_value) - 1)
-			//lexer_error(lexer, "n >= sizeof(t->string_value) - 1");
-		//t->string_value[n] = ch;
 		++n;
 		
 		hash ^= ch;
 		hash *= prime;
 	}
 	t->hash = hash;
-	//t->string_value[n] = 0;
 	t->length = n;
 	return t;
 }
@@ -259,7 +239,6 @@ LEXER_STATIC Token* lexer_read_characters(Lexer *lexer, Token *t, TokenType toke
 	u64 hash = offset;
 
 	t->token_type = token_type;
-	//t->position = lexer->index;
 	t->position = lexer->stream->tell(lexer->stream);
 	int n = 0;
 	while(1)
@@ -279,16 +258,12 @@ LEXER_STATIC Token* lexer_read_characters(Lexer *lexer, Token *t, TokenType toke
 			}
 			break;
 		}
-		//if(n >= sizeof(t->string_value) - 1)
-			//lexer_error(lexer, "n >= sizeof(t->string_value) - 1");
-		//t->string_value[n] = ch;
 		++n;
 		
 		hash ^= ch;
 		hash *= prime;
 	}
 	t->hash = hash;
-	//t->string_value[n] = 0;
 	t->length = n;
 	return t;
 }
@@ -381,7 +356,7 @@ LEXER_STATIC void lexer_expect(Lexer *lexer, TokenType tt, Token *t)
 
 LEXER_STATIC int lexer_step(Lexer *lexer, Token *t)
 {
-	int64_t index;
+	s64 index;
 	
 	t->next = NULL;
 	t->length = 1;
@@ -440,7 +415,6 @@ repeat:
 		case '/':
 		{
 			ch = lexer_read_and_advance(lexer);
-			// TODO: handle multi-line comment /*
 			if(!ch || (ch != '/' && ch != '*'))
 			{
 				lexer_unget(lexer); // We'll get \0 the next time we call lexer_step
@@ -492,10 +466,8 @@ LEXER_STATIC unsigned long long lexer_token_read_int(Lexer *lexer, Token *t)
 		return strtoull(x + 1, NULL, 16);
 	}
 	return strtoull(str, NULL, 10);
-	// return atoi(str);
 }
 
-// https://stackoverflow.com/questions/36430338/maximum-number-of-characters-used-by-a-string-representation-of-an-integer-type
 LEXER_STATIC int lexer_int(Lexer *l)
 {
 	Token t;
@@ -524,5 +496,3 @@ LEXER_STATIC void lexer_text(Lexer *l, char *str, size_t max_str)
 	}
 	lexer_token_read_string(l, &t, str, max_str);
 }
-
-#endif
