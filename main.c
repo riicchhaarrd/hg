@@ -1,9 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <dirent.h>
-#include <sys/stat.h>
-#include <unistd.h>
 #include <stdbool.h>
 #include <inttypes.h>
 
@@ -268,7 +265,7 @@ static void process_line(Options *opts,
 	}
 }
 
-static bool sb_grow_(struct StreamBuffer_s *, size_t size)
+static bool sb_grow_(struct StreamBuffer_s *sb, size_t size)
 {
 	fprintf(stderr, "Out of memory, this shouldn't happen.");
 	exit(-1);
